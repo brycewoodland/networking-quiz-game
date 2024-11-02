@@ -1,4 +1,5 @@
 import socket
+import threading
 
 quiz = [
     ('What is the atomic number of oxygen?', 
@@ -25,30 +26,64 @@ quiz = [
      ['Explorer 1', 'Sputnik 1', 'Vanguard 1', 'Luna 1'], 'Sputnik 1')
 ]
 
+clients = []
+scores = {}
+
+def handle_client(client_socket, client_address):
+    client_name = client_socket.recv(1024).decode('utf-8')
+    print(f'{client_name} from {client_address} has joined the game.')
+    clients.append(client_socket)
+    scores[client_socket] = 0
+
+    # Iterate through each quiz question
+    for question, options, correct_answer in quiz:
+        # Format the question with its options
+        question_message = (f"{question}\nOptions:\n" + 
+            "\n".join([f"{i+1}. {option}" for i, option in enumerate(options)])
+        )
+
+        # Send the question to the client
+        client_socket.send(question_message.encode('utf-8'))
+            
+        try:
+            # Receive and check each client's answer
+            client_response = client_socket.recv(1024).decode('utf-8')
+            # Check if the answer is correct or incorrect
+            if client_response.lower() == correct_answer.lower():
+                client_socket.send('Correct!\n'.encode('utf-8'))
+                scores[client_socket] += 1
+            else:
+                client_socket.send('Incorrect!\n'.encode('utf-8'))
+        except ConnectionResetError:
+            print(f'{client_name} from {client_address} disconnected.')
+            break
+
+    # End of game summary
+    client_socket.send('Quiz over!\n'.encode('utf-8'))
+    score_message = f'{client_name}, your final score is {scores[client_socket]}.\n'
+    client_socket.send(score_message.encode('utf-8'))
+
+    # Close the connection
+    client_socket.close()
+    clients.remove(client_socket)
+    print(f'{client_name} has left the game.')
+
+
 def start_server():
-    s = socket.socket()
+    # Create a socket object
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     print('Socket Created')
-    s.bind(('localhost', 9999))
-    s.listen(3)
-    print('Waiting for connections')
+    s.bind(('localhost', 9999)) # Bind the socket to localhost on port 9999
+    s.listen(5) # listen for incoming connections (up to 5 clients in queue)
+    print('Quiz game server started, waiting for players...')
 
     while True:
-        c, addr = s.accept()
-        print("Connected with ", addr)
+        # Accept a connection from client
+        client_socket, client_address = s.accept()
 
-        for question, options, answer in quiz:
-            question_with_options = (
-                f"{question}\nOptions:\n" + 
-                "\n".join([f"{i+1}. {option}" for i, option in enumerate(options)])
-            )
-            c.send(question_with_options.encode('utf-8'))
-            client_answer = c.recv(1024).decode('utf-8')
-            if client_answer.lower() == answer.lower():
-                c.send('Correct!\n'.encode('utf-8'))
-            else:
-                c.send('Incorrect!\n'.encode('utf-8'))
-
-        c.close()
+        # Create a new thread for each client connection
+        client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
+        client_thread.start()
 
 if __name__ == "__main__":
     start_server()
